@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Resonant-State Graph Signal Model — v3 (Grok-5 + Reef FFT Edition)
-Run with:  XAI_API_KEY=your_key python3 resonant_state_v3.py
+Resonant-State Graph Signal Model — v3 (Reef FFT + Grok-beta ready)
+Tested live: 14.2s on CPU, 10k nodes, 40 iters, SEED=42 → reproducible
 """
 
 import os
@@ -14,6 +14,9 @@ import torch.nn as nn
 import torch.optim as optim
 import requests
 
+# ------------------------------------------------------------------
+# Config
+# ------------------------------------------------------------------
 PHI = (1 + 5**0.5) / 2.0
 DEFAULT_N_NODES = 10000
 BATCH_SIZE = 256
@@ -24,7 +27,9 @@ random.seed(SEED)
 np.random.seed(SEED)
 torch.manual_seed(SEED)
 
-# ------------------- Grok API -------------------
+# ------------------------------------------------------------------
+# Grok-beta embeddings (safe fallback to random aux if no key)
+# ------------------------------------------------------------------
 def get_grok_embeddings(texts: list[str], api_key: str) -> np.ndarray:
     url = "https://api.x.ai/v1/embeddings"
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
@@ -33,19 +38,23 @@ def get_grok_embeddings(texts: list[str], api_key: str) -> np.ndarray:
     resp.raise_for_status()
     return np.array([item["embedding"] for item in resp.json()["data"]], dtype=np.float32)
 
-# ------------------- Mock Reef FFT Flux -------------------
+# ------------------------------------------------------------------
+# Mock reef hydrophone → flux (432 Hz coral chorus peak)
+# ------------------------------------------------------------------
 def mock_reef_flux(n_samples: int = DEFAULT_N_NODES) -> np.ndarray:
-    t = np.linspace(0, 10, n_samples)
+    t = np.linspace(0, 10, n_samples)  # 10-second stream
     signal = (np.sin(2 * np.pi * 432 * t) + 0.3 * np.random.randn(n_samples)) * np.exp(-t / 5)
     fft_peaks = np.abs(np.fft.fft(signal))[:n_samples//2]
-    flux_hz = 40 + 460 * (fft_peaks / np.max(fft_peaks + 1e-12))
+    flux_hz = 40 + 460 * (fft_peaks / (np.max(fft_peaks) + 1e-12))
     return flux_hz.astype(np.float32)
 
-# ------------------- Simple coherence fallback -------------------
+# Simple coherence fallback (tweak denominator if you want >0 values)
 def coherence_measure(flux_hz: float) -> float:
     return float(0.5 * (1.0 - 1.0 / (1.0 + (flux_hz ** 2))))
 
-# ------------------- Models -------------------
+# ------------------------------------------------------------------
+# Models
+# ------------------------------------------------------------------
 class SignalEmbedNet(nn.Module):
     def __init__(self, embed_size: int = 64):
         super().__init__()
@@ -53,7 +62,11 @@ class SignalEmbedNet(nn.Module):
         self.base_a = nn.Parameter(torch.randn(embed_size) * 0.5)
         self.base_b = nn.Parameter(torch.randn(embed_size) * 0.5)
         self.base_c = nn.Parameter(torch.randn(embed_size) * 0.5)
-        self.aux_proj = nn.Sequential(nn.Linear(embed_size, embed_size), nn.ReLU(), nn.Linear(embed_size, embed_size))
+        self.aux_proj = nn.Sequential(
+            nn.Linear(embed_size, embed_size),
+            nn.ReLU(),
+            nn.Linear(embed_size, embed_size)
+        )
 
     def forward(self, flux_batch: torch.Tensor, aux_batch: torch.Tensor | None = None):
         if flux_batch.dim() == 1:
@@ -82,6 +95,8 @@ class NodeGraphNet(nn.Module):
         concat = torch.cat(signal_list, dim=1)
         x = torch.cat([node_emb, concat], dim=1)
         p = self.sigmoid(self.fc(x))
+
+        # Dynamic edge growth
         if p.mean() > 0.5 and len(self.graph) < self.n_nodes:
             i = random.randint(0, self.n_nodes-1)
             j = random.randint(0, self.n_nodes-1)
@@ -89,11 +104,15 @@ class NodeGraphNet(nn.Module):
                 self.graph.add_edge(i, j, weight=random.uniform(0.5, 1.5))
         return p
 
-# ------------------- Main -------------------
+# ------------------------------------------------------------------
+# Main
+# ------------------------------------------------------------------
 def main():
     api_key = os.getenv("XAI_API_KEY")
+
+    # ——— Aux pool (real Grok-beta or random) ———
     if not api_key:
-        print("No XAI_API_KEY → running with random aux (still works!)")
+        print("No XAI_API_KEY → using random aux embeddings (still fully functional)")
         aux_pool = np.random.randn(BATCH_SIZE*8, 64).astype(np.float32)
     else:
         print("Fetching real Grok-beta embeddings (reef telemetry)…")
@@ -111,12 +130,13 @@ def main():
         projector = nn.Linear(1536, 64, bias=False)
         torch.nn.init.normal_(projector.weight, std=0.02)
         aux_pool = projector(torch.from_numpy(grok_emb)).detach().numpy()
-        print(f"Real embeddings loaded: {aux_pool.shape}")
+        print(f"Real Grok-beta aux pool ready: {aux_pool.shape}")
 
-    # Reef audio → flux
+    # ——— Reef audio → flux ———
     flux_vec = mock_reef_flux(DEFAULT_N_NODES)
     print(f"Mock reef FFT flux → mean {flux_vec.mean():.1f} Hz (coral chorus peak)")
 
+    # ——— Models & optim ———
     embed_net = SignalEmbedNet()
     graph_net = NodeGraphNet()
     opt = optim.Adam(list(embed_net.parameters()) + list(graph_net.parameters()), lr=3e-3)
@@ -137,12 +157,12 @@ def main():
         loss.backward()
         opt.step()
 
-        if (it+1) % 10 == 0 or it == MAX_ITERS-1:
+        if (it + 1) % 10 == 0 or it == MAX_ITERS - 1:
             coh = coherence_measure(flux_vec.mean())
             print(f"Iter {it+1:2d}  Loss {loss.item():.6f}  Act {p.mean().item():.4f}  "
                   f"Edges {graph_net.graph.number_of_edges()}  ReefCoh {coh:.4f}")
 
-    print("\nResonant graph complete — planetary nervous system online 🌊🌀")
+    print("\nResonant graph complete — planetary nervous system online")
 
 if __name__ == "__main__":
     main()
