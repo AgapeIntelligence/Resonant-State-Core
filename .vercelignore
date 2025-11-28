@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 tests/
 *.md
+*.py[co]
+api/resonant_api/__pycache__/
