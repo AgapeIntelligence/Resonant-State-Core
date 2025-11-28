@@ -1,6 +1,3 @@
-Given the current date and time (07:12 PM CST, Thursday, November 27, 2025), and your request for the full updated `README.md`, I'll provide the latest version based on all previous interactions. This `README.md` reflects the current state of the `resonant_api` project, incorporating the FastAPI-based API, quantum-bio fusion simulations, RabiNet-Grok integration, QuTiP-based quantum simulations, rate limiting (5 requests/minute), WebSocket for real-time resonance updates, and unit tests. I'll ensure all content is grounded in the provided codebase (`rabinet_grok.py`, `main.py`, `habitat/simulator.py`, etc.) and the X thread context, avoiding any hallucinations or unverified claims.
-
----
 
 ### Updated `README.md`
 ```markdown
